@@ -1,0 +1,2 @@
+{"dataset": "train", "precision": 0.9462915601023018, "balanced_accuracy": 0.7387628653567282, "recall": 0.4849279161205767, "f1_score": 0.6412478336221837}
+{"dataset": "test", "precision": 0.6974358974358974, "balanced_accuracy": 0.6567270609956313, "recall": 0.35509138381201044, "f1_score": 0.47058823529411764}

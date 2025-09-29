@@ -90,16 +90,8 @@ test_dataset.dropna(inplace=True)
 # Convertir columnas (sex,education y marriage) categoricas a tipo string
 
 
-train_dataset["EDUCATION"] = train_dataset["EDUCATION"].astype(str)
-test_dataset["EDUCATION"] = test_dataset["EDUCATION"].astype(str)
-train_dataset["EDUCATION"] = train_dataset["EDUCATION"].replace("4", "Others")
-test_dataset["EDUCATION"] = test_dataset["EDUCATION"].replace("4", "Others")
-print("Train categories:", train_dataset["EDUCATION"].unique())
-print("Test categories:", test_dataset["EDUCATION"].unique())
-train_dataset["SEX"] = train_dataset["SEX"].astype(str)
-test_dataset["SEX"] = test_dataset["SEX"].astype(str)
-train_dataset["MARRIAGE"] = train_dataset["MARRIAGE"].astype(str)
-test_dataset["MARRIAGE"] = test_dataset["MARRIAGE"].astype(str)
+train_dataset.loc[train_dataset["EDUCATION"] > 4, "EDUCATION"] = 5  # Usar 5 para "others"
+test_dataset.loc[test_dataset["EDUCATION"] > 4, "EDUCATION"] = 5
 
 
 
@@ -128,27 +120,36 @@ x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 #   one-hot-encoding.
 # - Ajusta un modelo de bosques aleatorios (rando forest).
 
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import OneHotEncoder
 
 
-# Convertir todas las columnas categóricas a tipo string
-categorical_columns = X.select_dtypes(include=["object", "category"]).columns
-
-
-# Verifica y convierte las columnas categóricas a cadenas
+# Asegúrate de que las columnas categóricas sean cadenas
+categorical_columns = ["SEX", "EDUCATION", "MARRIAGE"]
 for col in categorical_columns:
-    x_train[col] = x_train[col].fillna("missing").astype(str)
-    x_test[col] = x_test[col].fillna("missing").astype(str)
+    x_train[col] = x_train[col].astype(int)
+    x_test[col] = x_test[col].astype(int)
 
-    # Verifica los valores únicos en cada columna categórica
-    print(f"Valores únicos en {col} (entrenamiento): {x_train[col].unique()}")
-    print(f"Valores únicos en {col} (prueba): {x_test[col].unique()}")
+# Definir las categorías esperadas basadas en los datos únicos
+sex_categories = sorted(x_train["SEX"].unique().tolist())
+education_categories = sorted(x_train["EDUCATION"].unique().tolist()) 
+marriage_categories = sorted(x_train["MARRIAGE"].unique().tolist())
+
+print(f"SEX categories: {sex_categories}")
+print(f"EDUCATION categories: {education_categories}")
+print(f"MARRIAGE categories: {marriage_categories}")
+
+
 
 # Crear el preprocesador para las variables categóricas
+# OPCIÓN 1: Sin especificar categorías (más flexible)
 preprocessor = ColumnTransformer(
     transformers=[
-        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_columns)
+        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_columns)
     ],
-    remainder="passthrough"  # Dejar las columnas no categóricas sin cambios
+    remainder="passthrough"
 )
 
 # Crear el pipeline
@@ -156,7 +157,6 @@ pipeline = Pipeline(steps=[
     ("preprocessor", preprocessor),
     ("classifier", RandomForestClassifier(random_state=42))
 ])
-
 # Ajustar el pipeline con los datos de entrenamiento
 pipeline.fit(x_train, y_train)
 
@@ -170,44 +170,94 @@ print("Pipeline ajustado con éxito.")
 
 
 from sklearn.model_selection import GridSearchCV
+import time
+import time
+import threading
+import sys
 
 def optimize_hyperparameters_with_progress(pipeline, x_train, y_train, param_grid):
     """
-    Optimiza los hiperparámetros del pipeline usando GridSearchCV.
-    
-    Args:
-        pipeline: El pipeline que contiene el modelo y preprocesamiento.
-        x_train: Datos de entrenamiento (features).
-        y_train: Etiquetas de entrenamiento.
-        param_grid: Diccionario con los hiperparámetros a probar.
-    
-    Returns:
-        grid_search: Objeto GridSearchCV entrenado.
+    Optimiza los hiperparámetros con barra de progreso que se actualiza en tiempo real.
     """
-    # Crear el objeto GridSearchCV
+    
+    # Calcular total de combinaciones
+    total_combinations = 1
+    for values in param_grid.values():
+        total_combinations *= len(values)
+    
+    total_fits = total_combinations * 10  # 10-fold CV
+    print(f"Probando {total_combinations} combinaciones con 10-fold CV = {total_fits} entrenamientos...")
+    
+    # GridSearchCV con verbose para capturar el progreso
     grid_search = GridSearchCV(
         estimator=pipeline,
         param_grid=param_grid,
         scoring="balanced_accuracy",
         cv=10,
         n_jobs=-1,
-        verbose=1
+        verbose=2  # Activar verbose para seguir el progreso
     )
     
-    # Ajustar el modelo con los datos de entrenamiento
-    grid_search.fit(x_train, y_train)
+    # Variables para el progreso
+    progress_info = {'current': 0, 'total': total_fits}
+    
+    # Función que simula el progreso basado en verbose output
+    def update_progress():
+        with tqdm(total=total_fits, desc="Optimizando", unit="fit") as pbar:
+            start_time = time.time()
+            
+            # Iniciar GridSearchCV en thread separado
+            def run_grid_search():
+                grid_search.fit(x_train, y_train)
+            
+            search_thread = threading.Thread(target=run_grid_search)
+            search_thread.start()
+            
+            # Actualizar barra cada segundo
+            while search_thread.is_alive():
+                time.sleep(1)
+                # Estimación aproximada del progreso (no perfecta pero útil)
+                elapsed = time.time() - start_time
+                estimated_progress = min(int((elapsed / (total_fits * 0.5)) * total_fits), total_fits - 1)
+                
+                if estimated_progress > pbar.n:
+                    pbar.update(estimated_progress - pbar.n)
+                
+                # Mostrar tiempo transcurrido
+                pbar.set_postfix({"Tiempo": f"{elapsed:.0f}s"})
+            
+            # Esperar a que termine
+            search_thread.join()
+            
+            # Completar barra al 100%
+            pbar.update(total_fits - pbar.n)
+            
+            final_time = time.time() - start_time
+            pbar.set_postfix({"Tiempo total": f"{final_time:.1f}s", "Score": f"{grid_search.best_score_:.4f}"})
+    
+    # Ejecutar con progreso
+    update_progress()
+    
+    print(f"\n✅ Mejor score: {grid_search.best_score_:.6f}")
+    print(f"🏆 Mejores parámetros: {grid_search.best_params_}")
     
     return grid_search
 
 # Ejemplo de uso:
 param_grid = {
-    "classifier__n_estimators": [100],
-    "classifier__max_depth": [10],
-    "classifier__min_samples_split": [2],
-    "classifier__min_samples_leaf": [1]
+    "classifier__n_estimators": [1000],
+    "classifier__max_depth": [8],
+    "classifier__min_samples_split": [12],
+    "classifier__min_samples_leaf": [8],
+    "classifier__max_features": ["log2"],
+    "classifier__class_weight": ["balanced"],
+    "classifier__criterion": ["gini"],
+    "classifier__bootstrap": [True],
+    "classifier__random_state": [42]
 }
-
 grid_search = optimize_hyperparameters_with_progress(pipeline, x_train, y_train, param_grid)
+
+
 
 
 #___________________________________________________________________________________________________________________
@@ -241,6 +291,7 @@ save_model_as_gzip(grid_search, "files/models/model.pkl.gz")
 # {'dataset': 'train', 'precision': 0.8, 'balanced_accuracy': 0.7, 'recall': 0.9, 'f1_score': 0.85}
 # {'dataset': 'test', 'precision': 0.7, 'balanced_accuracy': 0.6, 'recall': 0.8, 'f1_score': 0.75}
 
+
 def calculate_and_save_metrics(model, x_train, y_train, x_test, y_test, output_path):
     """
     Calcula las métricas para los conjuntos de entrenamiento y prueba y las guarda en un archivo JSONL.
@@ -253,21 +304,22 @@ def calculate_and_save_metrics(model, x_train, y_train, x_test, y_test, output_p
         y_test: Etiquetas de prueba.
         output_path: Ruta del archivo JSON donde se guardarán las métricas.
     """
-    # Predicciones para el conjunto de entrenamiento
+
+
     y_train_pred = model.predict(x_train)
-    # Predicciones para el conjunto de prueba
     y_test_pred = model.predict(x_test)
 
-    # Calcular métricas para el conjunto de entrenamiento
+    # Diccionarios con métricas
     train_metrics = {
+        "type": "metrics",
         "dataset": "train",
         "precision": precision_score(y_train, y_train_pred, average="binary"),
         "balanced_accuracy": balanced_accuracy_score(y_train, y_train_pred),
         "recall": recall_score(y_train, y_train_pred, average="binary"),
         "f1_score": f1_score(y_train, y_train_pred, average="binary")
     }
-  # Calcular métricas para el conjunto de prueba
     test_metrics = {
+        "type": "metrics",
         "dataset": "test",
         "precision": precision_score(y_test, y_test_pred, average="binary"),
         "balanced_accuracy": balanced_accuracy_score(y_test, y_test_pred),
@@ -275,14 +327,14 @@ def calculate_and_save_metrics(model, x_train, y_train, x_test, y_test, output_p
         "f1_score": f1_score(y_test, y_test_pred, average="binary")
     }
 
-    # Guardar las métricas en un archivo JSONL (una línea por objeto JSON)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)  # Crear directorios si no existen
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Guardar en formato JSONL (una línea por dict)
     with open(output_path, "w") as f:
         f.write(json.dumps(train_metrics) + "\n")
         f.write(json.dumps(test_metrics) + "\n")
 
-
-# Ejemplo de uso:
+    print(f"✅ Métricas guardadas en {output_path} (JSONL)")
 calculate_and_save_metrics(grid_search, x_train, y_train, x_test, y_test, "files/output/metrics.json")
 
 
@@ -302,33 +354,21 @@ calculate_and_save_metrics(grid_search, x_train, y_train, x_test, y_test, "files
 
 def calculate_and_save_confusion_matrices(model, x_train, y_train, x_test, y_test, output_path):
     """
-    Calcula las matrices de confusión para los conjuntos de entrenamiento y prueba y las guarda en un archivo JSON.
-
-    Args:
-        model: Modelo entrenado.
-        x_train: Datos de entrenamiento (features).
-        y_train: Etiquetas de entrenamiento.
-        x_test: Datos de prueba (features).
-        y_test: Etiquetas de prueba.
-        output_path: Ruta del archivo JSON donde se guardarán las matrices de confusión.
+    Calcula matrices de confusión para train/test y las guarda en formato JSONL.
     """
-    # Predicciones para el conjunto de entrenamiento
+
     y_train_pred = model.predict(x_train)
-    # Predicciones para el conjunto de prueba
     y_test_pred = model.predict(x_test)
 
-    # Calcular matrices de confusión
     cm_train = confusion_matrix(y_train, y_train_pred)
     cm_test = confusion_matrix(y_test, y_test_pred)
 
-    # Convertir las matrices de confusión al formato especificado
     train_cm_dict = {
         "type": "cm_matrix",
         "dataset": "train",
         "true_0": {"predicted_0": int(cm_train[0, 0]), "predicted_1": int(cm_train[0, 1])},
         "true_1": {"predicted_0": int(cm_train[1, 0]), "predicted_1": int(cm_train[1, 1])}
     }
-
     test_cm_dict = {
         "type": "cm_matrix",
         "dataset": "test",
@@ -336,12 +376,13 @@ def calculate_and_save_confusion_matrices(model, x_train, y_train, x_test, y_tes
         "true_1": {"predicted_0": int(cm_test[1, 0]), "predicted_1": int(cm_test[1, 1])}
     }
 
-    # Crear los directorios necesarios si no existen
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # Guardar las matrices de confusión en un archivo JSON
-    with open(output_path, "w") as f:
-        json.dump([train_cm_dict, test_cm_dict], f, indent=4)
+    with open(output_path, "a") as f:  # 👈 append para no sobrescribir las métricas
+        f.write(json.dumps(train_cm_dict) + "\n")
+        f.write(json.dumps(test_cm_dict) + "\n")
 
-# Ejemplo de uso:
-# calculate_and_save_confusion_matrices(best_model, x_train, y_train, x_test, y_test, "files/output/metrics.json")
+    print(f"✅ Matrices de confusión guardadas en {output_path} (JSONL)")
+
+
+calculate_and_save_confusion_matrices(grid_search, x_train, y_train, x_test, y_test, "files/output/metrics.json")

@@ -245,13 +245,13 @@ def optimize_hyperparameters_with_progress(pipeline, x_train, y_train, param_gri
 
 # Ejemplo de uso:
 param_grid = {
-    "classifier__n_estimators": [1000],
-    "classifier__max_depth": [8],
-    "classifier__min_samples_split": [12],
-    "classifier__min_samples_leaf": [8],
-    "classifier__max_features": ["log2"],
+    "classifier__n_estimators": [1500],
+    "classifier__max_depth": [10],
+    "classifier__min_samples_split": [15],
+    "classifier__min_samples_leaf": [4],
+    "classifier__max_features": ["sqrt"],
     "classifier__class_weight": ["balanced"],
-    "classifier__criterion": ["gini"],
+    "classifier__criterion": ["entropy"],
     "classifier__bootstrap": [True],
     "classifier__random_state": [42]
 }

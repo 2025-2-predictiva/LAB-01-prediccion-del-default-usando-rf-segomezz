@@ -64,7 +64,7 @@ import pickle
 
 
 # Leer los datasets descomprimidos
-train_dataset = pd.read_csv("files/input/test_default_of_credit_card_clients.csv")
+train_dataset = pd.read_csv("files/input/train_default_of_credit_card_clients.csv")
 test_dataset = pd.read_csv("files/input/test_default_of_credit_card_clients.csv")
 
 
@@ -103,13 +103,13 @@ test_dataset.loc[test_dataset["EDUCATION"] > 4, "EDUCATION"] = 5
 
 
 # Separar características (X) y variable objetivo (y)
-X = train_dataset.drop(columns=["default"])
-y = train_dataset["default"]
 
-# Dividir los datos en entrenamiento (80%) y prueba (20%)
-x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+x_train = train_dataset.drop(columns=["default"])
+y_train = train_dataset["default"]
 
-
+# Características y variable objetivo para prueba
+x_test = test_dataset.drop(columns=["default"])
+y_test = test_dataset["default"]
 
 #_______________________________________________________________________________________________________
 
@@ -168,97 +168,52 @@ print("Pipeline ajustado con éxito.")
 # Use 10 splits para la validación cruzada. Use la función de precision
 # balanceada para medir la precisión del modelo.
 
+from tqdm import tqdm
+from tqdm_joblib import tqdm_joblib
 
-from sklearn.model_selection import GridSearchCV
-import time
-import time
-import threading
-import sys
 
-def optimize_hyperparameters_with_progress(pipeline, x_train, y_train, param_grid):
-    """
-    Optimiza los hiperparámetros con barra de progreso que se actualiza en tiempo real.
-    """
-    
-    # Calcular total de combinaciones
-    total_combinations = 1
-    for values in param_grid.values():
-        total_combinations *= len(values)
-    
-    total_fits = total_combinations * 10  # 10-fold CV
-    print(f"Probando {total_combinations} combinaciones con 10-fold CV = {total_fits} entrenamientos...")
-    
-    # GridSearchCV con verbose para capturar el progreso
+
+# Grid de hiperparámetros más amplio
+param_grid = {
+    "classifier__n_estimators": [950],
+    "classifier__max_depth": [None,12],
+    "classifier__min_samples_split": [2, 3],
+    "classifier__min_samples_leaf": [1, 2],
+    "classifier__max_features": ["sqrt"],
+    "classifier__class_weight": [None],
+    "classifier__criterion": ["gini"],
+    "classifier__bootstrap": [True, False]
+}
+
+# Total de combinaciones aproximado
+total_combinations = (
+    len(param_grid["classifier__n_estimators"]) *
+    len(param_grid["classifier__max_depth"]) *
+    len(param_grid["classifier__min_samples_split"]) *
+    len(param_grid["classifier__min_samples_leaf"]) *
+    len(param_grid["classifier__max_features"]) *
+    len(param_grid["classifier__class_weight"]) *
+    len(param_grid["classifier__criterion"]) *
+    len(param_grid["classifier__bootstrap"])
+)
+print(f"Se probarán aproximadamente {total_combinations} combinaciones con 10-fold CV.")
+
+# GridSearchCV con barra de progreso real usando tqdm_joblib
+with tqdm_joblib(tqdm(desc="GridSearchCV", total=total_combinations*10, unit="fit")):
     grid_search = GridSearchCV(
-        estimator=pipeline,
+        pipeline,
         param_grid=param_grid,
         scoring="balanced_accuracy",
         cv=10,
         n_jobs=-1,
-        verbose=2  # Activar verbose para seguir el progreso
+        verbose=0  # ya no necesitamos verbose
     )
-    
-    # Variables para el progreso
-    progress_info = {'current': 0, 'total': total_fits}
-    
-    # Función que simula el progreso basado en verbose output
-    def update_progress():
-        with tqdm(total=total_fits, desc="Optimizando", unit="fit") as pbar:
-            start_time = time.time()
-            
-            # Iniciar GridSearchCV en thread separado
-            def run_grid_search():
-                grid_search.fit(x_train, y_train)
-            
-            search_thread = threading.Thread(target=run_grid_search)
-            search_thread.start()
-            
-            # Actualizar barra cada segundo
-            while search_thread.is_alive():
-                time.sleep(1)
-                # Estimación aproximada del progreso (no perfecta pero útil)
-                elapsed = time.time() - start_time
-                estimated_progress = min(int((elapsed / (total_fits * 0.5)) * total_fits), total_fits - 1)
-                
-                if estimated_progress > pbar.n:
-                    pbar.update(estimated_progress - pbar.n)
-                
-                # Mostrar tiempo transcurrido
-                pbar.set_postfix({"Tiempo": f"{elapsed:.0f}s"})
-            
-            # Esperar a que termine
-            search_thread.join()
-            
-            # Completar barra al 100%
-            pbar.update(total_fits - pbar.n)
-            
-            final_time = time.time() - start_time
-            pbar.set_postfix({"Tiempo total": f"{final_time:.1f}s", "Score": f"{grid_search.best_score_:.4f}"})
-    
-    # Ejecutar con progreso
-    update_progress()
-    
-    print(f"\n✅ Mejor score: {grid_search.best_score_:.6f}")
-    print(f"🏆 Mejores parámetros: {grid_search.best_params_}")
-    
-    return grid_search
+    grid_search.fit(x_train, y_train)
 
-# Ejemplo de uso:
-param_grid = {
-    "classifier__n_estimators": [1500],
-    "classifier__max_depth": [10],
-    "classifier__min_samples_split": [15],
-    "classifier__min_samples_leaf": [4],
-    "classifier__max_features": ["sqrt"],
-    "classifier__class_weight": ["balanced"],
-    "classifier__criterion": ["entropy"],
-    "classifier__bootstrap": [True],
-    "classifier__random_state": [42]
-}
-grid_search = optimize_hyperparameters_with_progress(pipeline, x_train, y_train, param_grid)
-
-
-
+# Resultados
+print("Mejores hiperparámetros encontrados:")
+print(grid_search.best_params_)
+print(f"Mejor score (balanced_accuracy): {grid_search.best_score_:.4f}")
 
 #___________________________________________________________________________________________________________________
 # Paso 5.
